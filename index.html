@@ -1,0 +1,849 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Last.fm Scrobble Stats</title>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+<script src="data/stats.js"></script>
+<script src="data/scrobbles.js"></script>
+<style>
+:root {
+  --bg: #0a0a0a;
+  --surface: #151515;
+  --surface2: #1e1e1e;
+  --border: #2a2a2a;
+  --text: #e0e0e0;
+  --text-dim: #888;
+  --accent: #d51007;
+  --accent-dim: #a00d06;
+  --accent-light: #ff3b30;
+}
+[data-theme="light"] {
+  --bg: #f5f5f5;
+  --surface: #ffffff;
+  --surface2: #f0f0f0;
+  --border: #e0e0e0;
+  --text: #1a1a1a;
+  --text-dim: #666;
+  --accent: #d51007;
+  --accent-dim: #a00d06;
+  --accent-light: #c50e06;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  min-height: 100vh;
+}
+a { color: var(--accent-light); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+/* Header */
+.header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+.header h1 { font-size: 20px; font-weight: 600; }
+.header h1 span { color: var(--accent); }
+.header .meta { color: var(--text-dim); font-size: 13px; margin-left: auto; }
+
+/* Tabs */
+.tabs {
+  display: flex;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 0 24px;
+  gap: 0;
+  overflow-x: auto;
+}
+.tab {
+  padding: 12px 20px;
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 14px;
+  border-bottom: 2px solid transparent;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+.tab:hover { color: var(--text); }
+.tab.active { color: var(--accent-light); border-bottom-color: var(--accent); }
+
+/* Content */
+.content { padding: 24px; max-width: 1400px; margin: 0 auto; }
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* Cards */
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 16px; margin-bottom: 24px; }
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+}
+.card .label { font-size: 12px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.5px; }
+.card .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+.card .value.accent { color: var(--accent-light); }
+
+/* Chart containers */
+.chart-box {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 20px;
+  margin-bottom: 24px;
+}
+.chart-box h3 { font-size: 15px; font-weight: 600; margin-bottom: 16px; }
+.chart { width: 100%; height: 400px; }
+.chart.tall { height: 600px; }
+.chart.short { height: 300px; }
+
+/* Breadcrumb */
+.breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin-bottom: 12px;
+}
+.breadcrumb span { color: var(--text-dim); cursor: pointer; }
+.breadcrumb span:hover { color: var(--text); }
+.breadcrumb span.current { color: var(--text); cursor: default; }
+.breadcrumb .sep { color: var(--text-dim); }
+
+/* Year selector */
+.year-select {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  margin-bottom: 16px;
+}
+
+/* Table */
+.stats-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.stats-table th, .stats-table td {
+  padding: 10px 16px;
+  text-align: left;
+  border-bottom: 1px solid var(--border);
+}
+.stats-table th { color: var(--text-dim); font-size: 12px; text-transform: uppercase; font-weight: 600; }
+.stats-table td { font-size: 14px; }
+.stats-table tr:hover { background: var(--surface2); }
+.stats-table .rank { color: var(--text-dim); width: 40px; }
+.stats-table .count { color: var(--accent-light); font-weight: 600; text-align: right; }
+
+/* Search */
+.search-input {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 4px;
+  font-size: 14px;
+  width: 100%;
+  max-width: 400px;
+  margin-bottom: 16px;
+}
+.search-input::placeholder { color: var(--text-dim); }
+
+/* Row layout */
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 900px) { .row { grid-template-columns: 1fr; } }
+
+.loved-item {
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+}
+.loved-item .artist { color: var(--text-dim); }
+.loved-item .date { color: var(--text-dim); font-size: 12px; float: right; }
+
+/* Scrobble drill-down table */
+.scrobble-table { width: 100%; border-collapse: collapse; }
+.scrobble-table th, .scrobble-table td {
+  padding: 8px 12px; text-align: left; border-bottom: 1px solid var(--border); font-size: 13px;
+}
+.scrobble-table th { color: var(--text-dim); font-size: 11px; text-transform: uppercase; font-weight: 600; position: sticky; top: 0; background: var(--surface); }
+.scrobble-table tr:hover { background: var(--surface2); }
+.scrobble-table .loved-icon { color: var(--accent-light); }
+.scrobble-table .dim { color: var(--text-dim); }
+.pagination {
+  display: flex; align-items: center; gap: 8px; padding: 12px 0; font-size: 13px; color: var(--text-dim);
+}
+.pagination button {
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text); padding: 6px 14px;
+  border-radius: 4px; cursor: pointer; font-size: 13px;
+}
+.pagination button:hover { background: var(--border); }
+.pagination button:disabled { opacity: 0.4; cursor: default; }
+.drill-table-wrap { max-height: 600px; overflow-y: auto; border: 1px solid var(--border); border-radius: 6px; }
+
+/* Theme toggle */
+.theme-toggle {
+  background: none; border: none; cursor: pointer; font-size: 18px;
+  color: var(--text-dim); padding: 4px 8px; border-radius: 4px;
+}
+.theme-toggle:hover { background: var(--surface2); color: var(--text); }
+</style>
+</head>
+<body>
+<script>
+// Apply saved theme before first render to prevent flash
+(function() {
+  const saved = localStorage.getItem('lastfm-theme');
+  if (saved === 'light') document.documentElement.setAttribute('data-theme', 'light');
+})();
+</script>
+
+<div class="header">
+  <h1><span>Last.fm</span> Scrobble Stats</h1>
+  <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
+  <div class="meta" id="headerMeta"></div>
+</div>
+
+<div class="tabs" id="tabsBar"></div>
+
+<div class="content" id="content"></div>
+
+<script>
+const S = window.LASTFM_STATS;
+const $ = (sel, ctx = document) => ctx.querySelector(sel);
+const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
+
+// Format numbers
+const fmt = n => n.toLocaleString();
+const fmtDate = ts => new Date(ts * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+const fmtMonth = m => { const [y, mo] = m.split('-'); return new Date(y, mo - 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }); };
+
+// Scrobble data decoder
+const SC = window.LASTFM_SCROBBLES;
+function decodeScrobble(s) {
+  return { artist: SC.a[s[0]], track: SC.t[s[1]], album: SC.l[s[2]], timestamp: s[3], loved: s.length > 4 };
+}
+function getScrobblesInRange(startTs, endTs) {
+  return SC.s.filter(s => s[3] >= startTs && s[3] <= endTs).map(decodeScrobble);
+}
+function getScrobblesByArtist(artistName) {
+  const ai = SC.a.indexOf(artistName);
+  if (ai === -1) return [];
+  return SC.s.filter(s => s[0] === ai).map(decodeScrobble);
+}
+const fmtDateTime = ts => new Date(ts * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+
+function renderScrobbleTable(scrobbles, containerId, pageSize = 200) {
+  let page = 0;
+  const total = scrobbles.length;
+  const totalPages = Math.ceil(total / pageSize);
+
+  function renderPage() {
+    const start = page * pageSize;
+    const slice = scrobbles.slice(start, start + pageSize);
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = `
+      <div class="drill-table-wrap">
+        <table class="scrobble-table">
+          <thead><tr><th>Date</th><th>Track</th><th>Artist</th><th>Album</th><th></th></tr></thead>
+          <tbody>${slice.map(s => `<tr>
+            <td class="dim">${fmtDateTime(s.timestamp)}</td>
+            <td>${escHtml(s.track)}</td>
+            <td class="dim">${escHtml(s.artist)}</td>
+            <td class="dim">${escHtml(s.album)}</td>
+            <td>${s.loved ? '<span class="loved-icon">\u2665</span>' : ''}</td>
+          </tr>`).join('')}</tbody>
+        </table>
+      </div>
+      ${totalPages > 1 ? `<div class="pagination">
+        <button onclick="scrobbleTableNav('${containerId}',-1)" ${page === 0 ? 'disabled' : ''}>Prev</button>
+        <span>Page ${page + 1} of ${totalPages} (${total.toLocaleString()} scrobbles)</span>
+        <button onclick="scrobbleTableNav('${containerId}',1)" ${page >= totalPages - 1 ? 'disabled' : ''}>Next</button>
+      </div>` : `<div class="pagination"><span>${total.toLocaleString()} scrobbles</span></div>`}
+    `;
+  }
+
+  window._scrobbleTableState = window._scrobbleTableState || {};
+  window._scrobbleTableState[containerId] = { page, scrobbles, pageSize, totalPages, renderPage };
+  renderPage();
+}
+window.scrobbleTableNav = function(id, dir) {
+  const st = window._scrobbleTableState[id];
+  st.page = Math.max(0, Math.min(st.totalPages - 1, st.page + dir));
+  st.renderPage();
+};
+
+// State
+let state = { tab: 'overview', year: 'all' };
+const charts = {};
+
+// Tabs definition
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'artists', label: 'Artists' },
+  { id: 'tracks', label: 'Tracks' },
+  { id: 'albums', label: 'Albums' },
+  { id: 'loved', label: 'Loved' },
+  { id: 'trends', label: 'Trends' },
+];
+
+// Header meta
+$('#headerMeta').textContent = `${fmt(S.meta.total_scrobbles)} scrobbles · ${fmtDate(S.meta.first_scrobble)} – ${fmtDate(S.meta.last_scrobble)}`;
+
+// Build tabs
+const tabsBar = $('#tabsBar');
+TABS.forEach(t => {
+  const el = document.createElement('div');
+  el.className = 'tab';
+  el.textContent = t.label;
+  el.dataset.tab = t.id;
+  el.onclick = () => navigate({ tab: t.id });
+  tabsBar.appendChild(el);
+});
+
+// Hash navigation
+function parseHash() {
+  const h = location.hash.slice(1);
+  const params = {};
+  h.split('&').forEach(p => { const [k, v] = p.split('='); if (k) params[k] = decodeURIComponent(v); });
+  return params;
+}
+
+function setHash(s) {
+  const parts = [];
+  if (s.tab) parts.push(`tab=${s.tab}`);
+  if (s.year && s.year !== 'all') parts.push(`year=${s.year}`);
+  location.hash = parts.join('&');
+}
+
+function navigate(partial) {
+  Object.assign(state, partial);
+  setHash(state);
+  render();
+}
+
+window.addEventListener('hashchange', () => {
+  const h = parseHash();
+  state.tab = h.tab || 'overview';
+  state.year = h.year || 'all';
+  render();
+});
+
+// Year selector HTML
+function yearSelectHTML(id, includeAll = true) {
+  let opts = includeAll ? '<option value="all">All Time</option>' : '';
+  S.meta.years.slice().reverse().forEach(y => {
+    opts += `<option value="${y}">${y}</option>`;
+  });
+  return `<select class="year-select" id="${id}">${opts}</select>`;
+}
+
+// Read a CSS custom property value from :root / [data-theme]
+function themeColor(varName) {
+  return getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+}
+
+// ECharts theme defaults (dynamically updated from CSS vars)
+const THEME = {
+  backgroundColor: 'transparent',
+  textStyle: { color: '#888' },
+  title: { textStyle: { color: '#e0e0e0' } },
+};
+
+function updateThemeColors() {
+  THEME.textStyle.color = themeColor('--text-dim');
+  THEME.title.textStyle.color = themeColor('--text');
+}
+
+function makeChart(id, option) {
+  const el = document.getElementById(id);
+  if (!el) return null;
+  if (charts[id]) { charts[id].dispose(); }
+  updateThemeColors();
+  const c = echarts.init(el, null, { renderer: 'canvas' });
+  c.setOption({ ...THEME, ...option });
+  charts[id] = c;
+  return c;
+}
+
+// Theme toggle
+function toggleTheme() {
+  const root = document.documentElement;
+  const isCurrentlyLight = root.getAttribute('data-theme') === 'light';
+  if (isCurrentlyLight) {
+    root.removeAttribute('data-theme');
+    localStorage.setItem('lastfm-theme', 'dark');
+  } else {
+    root.setAttribute('data-theme', 'light');
+    localStorage.setItem('lastfm-theme', 'light');
+  }
+  updateThemeToggleIcon();
+  render();
+}
+
+function updateThemeToggleIcon() {
+  const btn = document.getElementById('themeToggle');
+  if (!btn) return;
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  // Show icon of what clicking will switch TO: moon = switch to dark, sun = switch to light
+  btn.textContent = isLight ? '\u263D' : '\u2609';
+}
+document.getElementById('themeToggle').onclick = toggleTheme;
+updateThemeToggleIcon();
+
+function resizeAll() {
+  Object.values(charts).forEach(c => c && c.resize());
+}
+window.addEventListener('resize', resizeAll);
+
+// ===== RENDER =====
+function render() {
+  // Update tab active state
+  $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === state.tab));
+
+  const content = $('#content');
+  const renderFn = {
+    overview: renderOverview,
+    artists: renderArtists,
+    tracks: renderTracks,
+    albums: renderAlbums,
+    loved: renderLoved,
+    trends: renderTrends,
+  }[state.tab];
+
+  if (renderFn) {
+    content.innerHTML = '';
+    renderFn(content);
+    // Delay resize for DOM paint
+    requestAnimationFrame(() => resizeAll());
+  }
+}
+
+// ===== OVERVIEW =====
+function renderOverview(el) {
+  const m = S.meta;
+  const years = m.years;
+  const daysActive = Math.ceil((m.last_scrobble - m.first_scrobble) / 86400);
+  const avgPerDay = (m.total_scrobbles / daysActive).toFixed(1);
+
+  el.innerHTML = `
+    <div class="cards">
+      <div class="card"><div class="label">Total Scrobbles</div><div class="value accent">${fmt(m.total_scrobbles)}</div></div>
+      <div class="card"><div class="label">Unique Artists</div><div class="value">${fmt(m.unique_artists)}</div></div>
+      <div class="card"><div class="label">Unique Tracks</div><div class="value">${fmt(m.unique_tracks)}</div></div>
+      <div class="card"><div class="label">Unique Albums</div><div class="value">${fmt(m.unique_albums)}</div></div>
+      <div class="card"><div class="label">Loved Tracks</div><div class="value">${fmt(m.loved_count)}</div></div>
+      <div class="card"><div class="label">Avg / Day</div><div class="value">${avgPerDay}</div></div>
+    </div>
+    <div class="chart-box">
+      <h3 id="drillTitle">Scrobbles per Year</h3>
+      <div class="breadcrumb" id="drillBreadcrumb"></div>
+      <div class="chart" id="drillChart"></div>
+    </div>
+    <div class="row">
+      <div class="chart-box">
+        <h3>Listening Hours</h3>
+        <div class="chart short" id="hourlyChart"></div>
+      </div>
+      <div class="chart-box">
+        <h3>Day of Week</h3>
+        <div class="chart short" id="dowChart"></div>
+      </div>
+    </div>
+    <div class="chart-box">
+      <h3>Daily Activity Heatmap</h3>
+      ${yearSelectHTML('heatmapYear', false)}
+      <div class="chart tall" id="heatmapChart"></div>
+    </div>
+  `;
+
+  renderDrill('yearly');
+  renderHourly();
+  renderDow();
+
+  const defaultHeatYear = S.meta.years[S.meta.years.length - 1];
+  renderHeatmap(defaultHeatYear);
+  $('#heatmapYear').value = defaultHeatYear;
+  $('#heatmapYear').onchange = e => renderHeatmap(e.target.value);
+}
+
+let drillLevel = 'yearly';
+let drillYear = null;
+
+function renderDrill(level, year) {
+  drillLevel = level;
+  drillYear = year || null;
+  const bc = $('#drillBreadcrumb');
+  const title = $('#drillTitle');
+
+  // Clean up scrobble table if navigating back
+  const existingTable = document.getElementById('drillScrobbleTable');
+  if (existingTable) existingTable.remove();
+  const drillChartEl = document.getElementById('drillChart');
+  if (drillChartEl) drillChartEl.style.display = '';
+
+  if (level === 'yearly') {
+    title.textContent = 'Scrobbles per Year';
+    bc.innerHTML = '';
+    const data = S.yearly.map(y => ({ name: y.year, value: y.scrobbles }));
+    const c = makeChart('drillChart', {
+      tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+      xAxis: { type: 'category', data: data.map(d => d.name), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+      yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+      series: [{ type: 'bar', data: data.map(d => d.value), itemStyle: { color: themeColor('--accent') }, emphasis: { itemStyle: { color: themeColor('--accent-light') } } }],
+      grid: { left: 60, right: 20, bottom: 40, top: 20 },
+    });
+    c.off('click');
+    c.on('click', params => renderDrill('monthly', params.name));
+
+  } else if (level === 'monthly') {
+    title.textContent = `Scrobbles in ${year}`;
+    bc.innerHTML = `<span onclick="renderDrill('yearly')">All Years</span><span class="sep">›</span><span class="current">${year}</span>`;
+    const months = S.monthly.filter(m => m.month.startsWith(year));
+    const c = makeChart('drillChart', {
+      tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+      xAxis: { type: 'category', data: months.map(m => m.month.split('-')[1]), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+      yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+      series: [{ type: 'bar', data: months.map(m => m.count), itemStyle: { color: themeColor('--accent') }, emphasis: { itemStyle: { color: themeColor('--accent-light') } } }],
+      grid: { left: 60, right: 20, bottom: 40, top: 20 },
+    });
+    c.off('click');
+    c.on('click', params => {
+      const monthNum = params.name;
+      renderDrill('scrobbles', `${year}-${monthNum}`);
+    });
+
+  } else if (level === 'scrobbles') {
+    // year is actually YYYY-MM here
+    const [y, m] = year.split('-');
+    title.textContent = `Scrobbles in ${fmtMonth(year)}`;
+    bc.innerHTML = `<span onclick="renderDrill('yearly')">All Years</span><span class="sep">›</span><span onclick="renderDrill('monthly','${y}')">${y}</span><span class="sep">›</span><span class="current">${fmtMonth(year)}</span>`;
+
+    // Hide chart, show scrobble table
+    const chartEl = document.getElementById('drillChart');
+    chartEl.style.display = 'none';
+
+    // Get time range for this month
+    const startTs = Math.floor(new Date(y, m - 1, 1).getTime() / 1000);
+    const endTs = Math.floor(new Date(y, m, 0, 23, 59, 59).getTime() / 1000);
+    const scrobbles = getScrobblesInRange(startTs, endTs);
+    scrobbles.sort((a, b) => b.timestamp - a.timestamp);
+
+    // Insert table container after chart
+    let tableContainer = document.getElementById('drillScrobbleTable');
+    if (!tableContainer) {
+      tableContainer = document.createElement('div');
+      tableContainer.id = 'drillScrobbleTable';
+      chartEl.parentNode.insertBefore(tableContainer, chartEl.nextSibling);
+    }
+    renderScrobbleTable(scrobbles, 'drillScrobbleTable');
+  }
+}
+// Make global for breadcrumb onclick
+window.renderDrill = renderDrill;
+
+function renderHourly() {
+  const hours = S.hourly;
+  const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
+  const indicator = hours.map((v, i) => ({ name: labels[i], max: Math.max(...hours) }));
+  makeChart('hourlyChart', {
+    tooltip: { backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+    radar: { indicator, shape: 'circle', axisName: { color: themeColor('--text-dim'), fontSize: 10 }, splitLine: { lineStyle: { color: themeColor('--border') } }, splitArea: { areaStyle: { color: ['transparent'] } } },
+    series: [{ type: 'radar', data: [{ value: hours, name: 'Scrobbles', areaStyle: { color: 'rgba(213,16,7,0.2)' }, lineStyle: { color: themeColor('--accent') }, itemStyle: { color: themeColor('--accent') } }] }],
+  });
+}
+
+function renderDow() {
+  makeChart('dowChart', {
+    tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+    xAxis: { type: 'category', data: S.dow.map(d => d.day), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+    yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+    series: [{ type: 'bar', data: S.dow.map(d => d.count), itemStyle: { color: themeColor('--accent') } }],
+    grid: { left: 60, right: 20, bottom: 40, top: 20 },
+  });
+}
+
+function renderHeatmap(year) {
+  const days = S.daily_counts.filter(d => d.date.startsWith(year));
+  const data = days.map(d => [d.date, d.count]);
+  const max = Math.max(...days.map(d => d.count), 1);
+  makeChart('heatmapChart', {
+    tooltip: {
+      formatter: p => `${p.value[0]}: ${p.value[1]} scrobbles`,
+      backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') },
+    },
+    visualMap: {
+      min: 0, max, show: true,
+      orient: 'horizontal', left: 'center', bottom: 10,
+      inRange: { color: [themeColor('--surface'), '#5a0904', themeColor('--accent'), themeColor('--accent-light')] },
+      textStyle: { color: themeColor('--text-dim') },
+    },
+    calendar: {
+      range: year,
+      cellSize: [16, 16],
+      top: 40, left: 60, right: 40,
+      itemStyle: { borderColor: themeColor('--bg'), borderWidth: 2 },
+      yearLabel: { show: false },
+      monthLabel: { color: themeColor('--text-dim') },
+      dayLabel: { color: themeColor('--text-dim'), firstDay: 1 },
+      splitLine: { lineStyle: { color: themeColor('--border') } },
+    },
+    series: [{ type: 'heatmap', coordinateSystem: 'calendar', data }],
+  });
+}
+
+// ===== ARTISTS =====
+function renderArtists(el) {
+  el.innerHTML = `
+    ${yearSelectHTML('artistYear')}
+    <div class="chart-box">
+      <h3>Top 50 Artists</h3>
+      <div class="chart tall" id="artistsBarChart"></div>
+    </div>
+    <div class="chart-box" id="artistTrendBox" style="display:none">
+      <h3 id="artistTrendTitle">Artist Trend</h3>
+      <div class="chart" id="artistTrendChart"></div>
+    </div>
+    <div class="chart-box" id="artistScrobblesBox" style="display:none">
+      <h3 id="artistScrobblesTitle">Artist Scrobbles</h3>
+      <div id="artistScrobbleTable"></div>
+    </div>
+  `;
+
+  function update(year) {
+    const items = year === 'all' ? S.top_artists.overall : (S.top_artists.by_year[year] || []);
+    const top = items.slice(0, 50).reverse();
+    const c = makeChart('artistsBarChart', {
+      tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+      xAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+      yAxis: { type: 'category', data: top.map(a => a.name), axisLabel: { color: themeColor('--text-dim'), fontSize: 11, width: 220, overflow: 'truncate', ellipsis: '...' }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+      series: [{ type: 'bar', data: top.map(a => a.count), itemStyle: { color: themeColor('--accent') }, emphasis: { itemStyle: { color: themeColor('--accent-light') } } }],
+      grid: { left: 240, right: 40, bottom: 20, top: 10 },
+    });
+    c.off('click');
+    c.on('click', params => showArtistTrend(params.name));
+  }
+
+  update(state.year || 'all');
+  $('#artistYear').value = state.year || 'all';
+  $('#artistYear').onchange = e => { state.year = e.target.value; update(e.target.value); };
+}
+
+function showArtistTrend(artist) {
+  const box = $('#artistTrendBox');
+  if (!box) return;
+  box.style.display = 'block';
+  $('#artistTrendTitle').textContent = `${artist} — Yearly Trend`;
+  const trend = S.artist_trends[artist];
+  if (!trend) {
+    // Build from by_year data
+    const years = S.meta.years;
+    const data = years.map(y => {
+      const items = S.top_artists.by_year[y] || [];
+      const found = items.find(a => a.name === artist);
+      return found ? found.count : 0;
+    });
+    makeChart('artistTrendChart', {
+      tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+      xAxis: { type: 'category', data: years, axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+      yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+      series: [{ type: 'line', data, smooth: true, lineStyle: { color: themeColor('--accent') }, itemStyle: { color: themeColor('--accent') }, areaStyle: { color: 'rgba(213,16,7,0.15)' } }],
+      grid: { left: 60, right: 20, bottom: 40, top: 20 },
+    });
+    return;
+  }
+  const years = Object.keys(trend).sort();
+  const data = years.map(y => trend[y]);
+  makeChart('artistTrendChart', {
+    tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+    xAxis: { type: 'category', data: years, axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+    yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+    series: [{ type: 'line', data, smooth: true, lineStyle: { color: themeColor('--accent') }, itemStyle: { color: themeColor('--accent') }, areaStyle: { color: 'rgba(213,16,7,0.15)' } }],
+    grid: { left: 60, right: 20, bottom: 40, top: 20 },
+  });
+  // Show individual scrobbles for this artist
+  const scrobbleBox = $('#artistScrobblesBox');
+  if (scrobbleBox) {
+    scrobbleBox.style.display = 'block';
+    $('#artistScrobblesTitle').textContent = `${artist} — All Scrobbles`;
+    const artistScrobbles = getScrobblesByArtist(artist);
+    artistScrobbles.sort((a, b) => b.timestamp - a.timestamp);
+    renderScrobbleTable(artistScrobbles, 'artistScrobbleTable');
+  }
+  requestAnimationFrame(() => box.scrollIntoView({ behavior: 'smooth' }));
+}
+
+// ===== TRACKS =====
+function renderTracks(el) {
+  el.innerHTML = `
+    ${yearSelectHTML('trackYear')}
+    <div class="chart-box">
+      <h3>Top Tracks</h3>
+      <table class="stats-table" id="tracksTable"></table>
+    </div>
+  `;
+
+  function update(year) {
+    const items = year === 'all' ? S.top_tracks.overall : (S.top_tracks.by_year[year] || []);
+    const table = $('#tracksTable');
+    table.innerHTML = `<thead><tr><th class="rank">#</th><th>Track</th><th class="count">Plays</th></tr></thead>` +
+      '<tbody>' + items.slice(0, 50).map((t, i) => {
+        const [artist, ...rest] = t.name.split(' — ');
+        const track = rest.join(' — ');
+        return `<tr><td class="rank">${i + 1}</td><td>${escHtml(track)}<br><small style="color:var(--text-dim)">${escHtml(artist)}</small></td><td class="count">${fmt(t.count)}</td></tr>`;
+      }).join('') + '</tbody>';
+  }
+
+  update(state.year || 'all');
+  $('#trackYear').value = state.year || 'all';
+  $('#trackYear').onchange = e => { state.year = e.target.value; update(e.target.value); };
+}
+
+// ===== ALBUMS =====
+function renderAlbums(el) {
+  el.innerHTML = `
+    ${yearSelectHTML('albumYear')}
+    <div class="chart-box">
+      <h3>Top Albums</h3>
+      <table class="stats-table" id="albumsTable"></table>
+    </div>
+  `;
+
+  function update(year) {
+    const items = year === 'all' ? S.top_albums.overall : (S.top_albums.by_year[year] || []);
+    const table = $('#albumsTable');
+    table.innerHTML = `<thead><tr><th class="rank">#</th><th>Album</th><th class="count">Plays</th></tr></thead>` +
+      '<tbody>' + items.slice(0, 50).map((a, i) => {
+        const [artist, ...rest] = a.name.split(' — ');
+        const album = rest.join(' — ');
+        return `<tr><td class="rank">${i + 1}</td><td>${escHtml(album)}<br><small style="color:var(--text-dim)">${escHtml(artist)}</small></td><td class="count">${fmt(a.count)}</td></tr>`;
+      }).join('') + '</tbody>';
+  }
+
+  update(state.year || 'all');
+  $('#albumYear').value = state.year || 'all';
+  $('#albumYear').onchange = e => { state.year = e.target.value; update(e.target.value); };
+}
+
+// ===== LOVED =====
+function renderLoved(el) {
+  el.innerHTML = `
+    <input class="search-input" id="lovedSearch" placeholder="Search loved tracks...">
+    <div class="chart-box">
+      <h3>Loved Tracks (${fmt(S.loved.length)})</h3>
+      <div id="lovedList"></div>
+    </div>
+  `;
+
+  function update(query) {
+    const q = query.toLowerCase();
+    const filtered = q ? S.loved.filter(t => `${t.artist} ${t.track} ${t.album}`.toLowerCase().includes(q)) : S.loved;
+    const list = $('#lovedList');
+    list.innerHTML = filtered.slice(0, 200).map(t =>
+      `<div class="loved-item"><span class="date">${fmtDate(t.timestamp)}</span><strong>${escHtml(t.track)}</strong> <span class="artist">by ${escHtml(t.artist)}</span></div>`
+    ).join('') + (filtered.length > 200 ? `<div style="padding:12px;color:var(--text-dim)">...and ${filtered.length - 200} more</div>` : '');
+  }
+
+  update('');
+  $('#lovedSearch').oninput = e => update(e.target.value);
+}
+
+// ===== TRENDS =====
+function renderTrends(el) {
+  el.innerHTML = `
+    <div class="chart-box">
+      <h3>Monthly Scrobbles (Full Timeline)</h3>
+      <div class="chart tall" id="monthlyLineChart"></div>
+    </div>
+    <div class="chart-box">
+      <h3>Cumulative Scrobbles</h3>
+      <div class="chart" id="cumulativeChart"></div>
+    </div>
+    <div class="chart-box">
+      <h3>Top Artists Over Time</h3>
+      <div class="chart tall" id="artistStackChart"></div>
+    </div>
+  `;
+
+  // Monthly line
+  makeChart('monthlyLineChart', {
+    tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+    dataZoom: [{ type: 'inside' }, { type: 'slider', bottom: 10, textStyle: { color: themeColor('--text-dim') } }],
+    xAxis: { type: 'category', data: S.monthly.map(m => m.month), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+    yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+    series: [{ type: 'line', data: S.monthly.map(m => m.count), smooth: true, lineStyle: { color: themeColor('--accent'), width: 1.5 }, itemStyle: { color: themeColor('--accent') }, areaStyle: { color: 'rgba(213,16,7,0.1)' }, symbol: 'none' }],
+    grid: { left: 60, right: 20, bottom: 60, top: 20 },
+  });
+
+  // Cumulative
+  let cumulative = [];
+  let sum = 0;
+  S.monthly.forEach(m => { sum += m.count; cumulative.push(sum); });
+  // Add milestone markers
+  const milestones = [10000, 25000, 50000, 75000, 100000];
+  const markPoints = [];
+  milestones.forEach(ms => {
+    const idx = cumulative.findIndex(v => v >= ms);
+    if (idx >= 0) markPoints.push({ coord: [idx, cumulative[idx]], value: `${ms / 1000}K`, itemStyle: { color: themeColor('--accent') } });
+  });
+
+  makeChart('cumulativeChart', {
+    tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') }, formatter: p => `${p[0].axisValue}: ${fmt(p[0].value)} total` },
+    xAxis: { type: 'category', data: S.monthly.map(m => m.month), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+    yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim'), formatter: v => `${(v/1000).toFixed(0)}K` }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+    series: [{ type: 'line', data: cumulative, smooth: true, lineStyle: { color: themeColor('--accent') }, areaStyle: { color: 'rgba(213,16,7,0.1)' }, symbol: 'none', markPoint: { data: markPoints, label: { fontSize: 10, color: themeColor('--text') } } }],
+    grid: { left: 60, right: 20, bottom: 40, top: 20 },
+  });
+
+  // Top 5 artists stacked area
+  const topArtistNames = S.top_artists.overall.slice(0, 5).map(a => a.name);
+  const colors = ['#d51007', '#ff6b35', '#f7c948', '#47b881', '#5c7cfa'];
+  const stackSeries = topArtistNames.map((name, i) => {
+    const trend = S.artist_trends[name] || {};
+    return {
+      name,
+      type: 'line',
+      stack: 'total',
+      areaStyle: { opacity: 0.4 },
+      lineStyle: { color: colors[i], width: 1 },
+      itemStyle: { color: colors[i] },
+      data: S.meta.years.map(y => trend[y] || 0),
+      symbol: 'none',
+    };
+  });
+
+  makeChart('artistStackChart', {
+    tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
+    legend: { data: topArtistNames, textStyle: { color: themeColor('--text-dim') }, bottom: 10 },
+    xAxis: { type: 'category', data: S.meta.years, axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+    yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
+    series: stackSeries,
+    grid: { left: 60, right: 20, bottom: 60, top: 20 },
+  });
+}
+
+// Helpers
+function escHtml(s) {
+  const d = document.createElement('div');
+  d.textContent = s;
+  return d.innerHTML;
+}
+
+// Init
+const initHash = parseHash();
+state.tab = initHash.tab || 'overview';
+state.year = initHash.year || 'all';
+render();
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+# secrets
+.env
+
+# claude code local settings
+.claude/
+
+# data
+data/
+
+# python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+dist/

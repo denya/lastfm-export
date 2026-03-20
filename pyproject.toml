@@ -1,0 +1,10 @@
+[project]
+name = "lastfm-export"
+version = "0.1.0"
+description = "Export Last.fm scrobbles and generate interactive statistics"
+requires-python = ">=3.12"
+dependencies = [
+    "httpx",
+    "python-dotenv",
+    "rich",
+]
