@@ -196,6 +196,100 @@ a:hover { text-decoration: underline; }
   color: var(--text-dim); padding: 4px 8px; border-radius: 4px;
 }
 .theme-toggle:hover { background: var(--surface2); color: var(--text); }
+
+/* Filter button */
+.filter-btn {
+  background: none; border: none; cursor: pointer; font-size: 18px;
+  color: var(--text-dim); padding: 4px 8px; border-radius: 4px;
+  position: relative;
+}
+.filter-btn:hover { background: var(--surface2); color: var(--text); }
+.filter-badge {
+  position: absolute; top: -4px; right: -4px;
+  background: var(--accent); color: #fff; font-size: 10px; font-weight: 700;
+  min-width: 16px; height: 16px; border-radius: 8px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0 4px; line-height: 1;
+}
+
+/* Filter panel */
+.filter-panel {
+  position: fixed; top: 0; right: 0; width: 360px; height: 100vh;
+  background: var(--surface); border-left: 1px solid var(--border);
+  z-index: 100; padding: 24px; overflow-y: auto;
+  transform: translateX(100%); transition: transform 0.2s;
+  box-shadow: -4px 0 20px rgba(0,0,0,0.3);
+}
+.filter-panel.open { transform: translateX(0); }
+.filter-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.5);
+  z-index: 99; display: none;
+}
+.filter-overlay.open { display: block; }
+.filter-panel h2 {
+  font-size: 16px; font-weight: 600; margin-bottom: 16px;
+  display: flex; align-items: center; justify-content: space-between;
+}
+.filter-panel .close-btn {
+  background: none; border: none; cursor: pointer; font-size: 20px;
+  color: var(--text-dim); padding: 4px 8px; border-radius: 4px;
+}
+.filter-panel .close-btn:hover { color: var(--text); background: var(--surface2); }
+.filter-search {
+  background: var(--surface2); border: 1px solid var(--border); color: var(--text);
+  padding: 10px 14px; border-radius: 6px; font-size: 14px; width: 100%;
+  margin-bottom: 8px;
+}
+.filter-search::placeholder { color: var(--text-dim); }
+.filter-search-results {
+  max-height: 240px; overflow-y: auto; margin-bottom: 16px;
+}
+.filter-search-item {
+  padding: 8px 12px; cursor: pointer; font-size: 13px;
+  border-radius: 4px; color: var(--text);
+}
+.filter-search-item:hover { background: var(--surface2); }
+.filter-section-label {
+  font-size: 12px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 8px; display: flex;
+  align-items: center; justify-content: space-between;
+}
+.filter-clear-all {
+  font-size: 11px; color: var(--accent-light); cursor: pointer;
+  text-transform: none; letter-spacing: 0;
+}
+.filter-clear-all:hover { text-decoration: underline; }
+.filter-excluded-list { margin-bottom: 16px; }
+.filter-excluded-item {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 8px 12px; font-size: 13px; border-bottom: 1px solid var(--border);
+}
+.filter-excluded-item .remove-btn {
+  background: none; border: none; cursor: pointer; font-size: 16px;
+  color: var(--text-dim); padding: 2px 6px; border-radius: 4px;
+}
+.filter-excluded-item .remove-btn:hover { color: var(--accent-light); background: var(--surface2); }
+.filter-empty {
+  color: var(--text-dim); font-size: 13px; padding: 8px 0;
+}
+
+/* Header exclusion indicator */
+.exclusion-indicator {
+  font-size: 12px; color: var(--text-dim); margin-left: 8px;
+}
+.exclusion-indicator .clear-link {
+  color: var(--accent-light); cursor: pointer; margin-left: 4px;
+}
+.exclusion-indicator .clear-link:hover { text-decoration: underline; }
+
+/* Filtered label on cards */
+.card .filtered-label {
+  font-size: 10px; color: var(--accent-light); margin-top: 2px;
+}
+
+@media (max-width: 500px) {
+  .filter-panel { width: 100vw; }
+}
 </style>
 </head>
 <body>
@@ -210,7 +304,21 @@ a:hover { text-decoration: underline; }
 <div class="header">
   <h1><span>Last.fm</span> Scrobble Stats</h1>
   <button class="theme-toggle" id="themeToggle" title="Toggle theme"></button>
+  <button class="filter-btn" id="filterBtn" title="Exclude artists">&#9881;</button>
   <div class="meta" id="headerMeta"></div>
+  <span class="exclusion-indicator" id="exclusionIndicator"></span>
+</div>
+
+<div class="filter-overlay" id="filterOverlay"></div>
+<div class="filter-panel" id="filterPanel">
+  <h2>Exclude Artists <button class="close-btn" id="filterClose">&times;</button></h2>
+  <input class="filter-search" id="filterSearch" placeholder="Search artists to exclude..." autocomplete="off">
+  <div class="filter-search-results" id="filterSearchResults"></div>
+  <div class="filter-section-label">
+    <span>Excluded Artists</span>
+    <span class="filter-clear-all" id="filterClearAll" style="display:none">Clear All</span>
+  </div>
+  <div class="filter-excluded-list" id="filterExcludedList"></div>
 </div>
 
 <div class="tabs" id="tabsBar"></div>
@@ -232,8 +340,74 @@ const SC = window.LASTFM_SCROBBLES;
 function decodeScrobble(s) {
   return { artist: SC.a[s[0]], track: SC.t[s[1]], album: SC.l[s[2]], timestamp: s[3], loved: s.length > 4 };
 }
+
+// === Artist Exclusion ===
+let excludedArtists = new Set(JSON.parse(localStorage.getItem('lastfm-excluded-artists') || '[]'));
+
+function saveExcludedArtists() {
+  localStorage.setItem('lastfm-excluded-artists', JSON.stringify([...excludedArtists]));
+}
+
+function isExcluded(artistIdx) {
+  return excludedArtists.has(SC.a[artistIdx]);
+}
+
+function hasExclusions() {
+  return excludedArtists.size > 0;
+}
+
+// Filter top items (from stats.js pre-aggregated data) whose name starts with "ArtistName — ..."
+function filterTopItems(items) {
+  if (!hasExclusions()) return items;
+  return items.filter(item => {
+    const artist = item.name.split(' \u2014 ')[0];
+    return !excludedArtists.has(artist);
+  });
+}
+
+// Filter top artist items by exact name match
+function filterTopArtists(items) {
+  if (!hasExclusions()) return items;
+  return items.filter(item => !excludedArtists.has(item.name));
+}
+
+// Recompute overview stats from raw scrobbles when exclusions active
+function getFilteredStats() {
+  if (!hasExclusions()) {
+    return {
+      total_scrobbles: S.meta.total_scrobbles,
+      unique_artists: S.meta.unique_artists,
+      unique_tracks: S.meta.unique_tracks,
+      unique_albums: S.meta.unique_albums,
+      loved_count: S.meta.loved_count,
+      filtered: false,
+    };
+  }
+  const artists = new Set();
+  const tracks = new Set();
+  const albums = new Set();
+  let total = 0;
+  let loved = 0;
+  for (const s of SC.s) {
+    if (isExcluded(s[0])) continue;
+    total++;
+    artists.add(s[0]);
+    tracks.add(s[1]);
+    albums.add(s[2]);
+    if (s.length > 4) loved++;
+  }
+  return {
+    total_scrobbles: total,
+    unique_artists: artists.size,
+    unique_tracks: tracks.size,
+    unique_albums: albums.size,
+    loved_count: loved,
+    filtered: true,
+  };
+}
+
 function getScrobblesInRange(startTs, endTs) {
-  return SC.s.filter(s => s[3] >= startTs && s[3] <= endTs).map(decodeScrobble);
+  return SC.s.filter(s => s[3] >= startTs && s[3] <= endTs && !isExcluded(s[0])).map(decodeScrobble);
 }
 function getScrobblesByArtist(artistName) {
   const ai = SC.a.indexOf(artistName);
@@ -298,7 +472,11 @@ const TABS = [
 ];
 
 // Header meta
-$('#headerMeta').textContent = `${fmt(S.meta.total_scrobbles)} scrobbles · ${fmtDate(S.meta.first_scrobble)} – ${fmtDate(S.meta.last_scrobble)}`;
+function updateHeaderMeta() {
+  const fs = getFilteredStats();
+  $('#headerMeta').textContent = `${fmt(fs.total_scrobbles)} scrobbles · ${fmtDate(S.meta.first_scrobble)} – ${fmtDate(S.meta.last_scrobble)}`;
+}
+updateHeaderMeta();
 
 // Build tabs
 const tabsBar = $('#tabsBar');
@@ -401,6 +579,131 @@ function updateThemeToggleIcon() {
 document.getElementById('themeToggle').onclick = toggleTheme;
 updateThemeToggleIcon();
 
+// === Filter Panel UI ===
+function openFilterPanel() {
+  $('#filterPanel').classList.add('open');
+  $('#filterOverlay').classList.add('open');
+  $('#filterSearch').value = '';
+  $('#filterSearchResults').innerHTML = '';
+  renderExcludedList();
+  setTimeout(() => $('#filterSearch').focus(), 100);
+}
+
+function closeFilterPanel() {
+  $('#filterPanel').classList.remove('open');
+  $('#filterOverlay').classList.remove('open');
+}
+
+$('#filterBtn').onclick = openFilterPanel;
+$('#filterOverlay').onclick = closeFilterPanel;
+$('#filterClose').onclick = closeFilterPanel;
+
+$('#filterSearch').oninput = function() {
+  const q = this.value.toLowerCase().trim();
+  const results = $('#filterSearchResults');
+  if (!q) { results.innerHTML = ''; return; }
+  const matches = [];
+  for (let i = 0; i < SC.a.length && matches.length < 20; i++) {
+    if (SC.a[i].toLowerCase().includes(q) && !excludedArtists.has(SC.a[i])) {
+      matches.push(SC.a[i]);
+    }
+  }
+  if (matches.length === 0) {
+    results.innerHTML = '<div class="filter-empty">No matching artists found</div>';
+    return;
+  }
+  results.innerHTML = '';
+  matches.forEach(name => {
+    const div = document.createElement('div');
+    div.className = 'filter-search-item';
+    div.textContent = name;
+    div.onclick = () => {
+      excludedArtists.add(name);
+      saveExcludedArtists();
+      renderExcludedList();
+      updateExclusionUI();
+      // Refresh search to remove the just-added artist
+      $('#filterSearch').dispatchEvent(new Event('input'));
+      render();
+    };
+    results.appendChild(div);
+  });
+};
+
+function renderExcludedList() {
+  const list = $('#filterExcludedList');
+  const clearBtn = $('#filterClearAll');
+  if (excludedArtists.size === 0) {
+    list.innerHTML = '<div class="filter-empty">No artists excluded. Search above to add.</div>';
+    clearBtn.style.display = 'none';
+    return;
+  }
+  clearBtn.style.display = '';
+  const sorted = [...excludedArtists].sort((a, b) => a.localeCompare(b));
+  list.innerHTML = '';
+  sorted.forEach(name => {
+    const row = document.createElement('div');
+    row.className = 'filter-excluded-item';
+    const span = document.createElement('span');
+    span.textContent = name;
+    const btn = document.createElement('button');
+    btn.className = 'remove-btn';
+    btn.innerHTML = '&times;';
+    btn.onclick = () => {
+      excludedArtists.delete(name);
+      saveExcludedArtists();
+      renderExcludedList();
+      updateExclusionUI();
+      render();
+    };
+    row.appendChild(span);
+    row.appendChild(btn);
+    list.appendChild(row);
+  });
+}
+
+$('#filterClearAll').onclick = () => {
+  excludedArtists.clear();
+  saveExcludedArtists();
+  renderExcludedList();
+  updateExclusionUI();
+  render();
+};
+
+function updateExclusionUI() {
+  // Badge on filter button
+  const btn = $('#filterBtn');
+  let badge = btn.querySelector('.filter-badge');
+  if (hasExclusions()) {
+    if (!badge) {
+      badge = document.createElement('span');
+      badge.className = 'filter-badge';
+      btn.appendChild(badge);
+    }
+    badge.textContent = excludedArtists.size;
+  } else if (badge) {
+    badge.remove();
+  }
+
+  // Header indicator
+  const indicator = $('#exclusionIndicator');
+  if (hasExclusions()) {
+    indicator.innerHTML = `${excludedArtists.size} artist${excludedArtists.size > 1 ? 's' : ''} excluded <span class="clear-link" id="headerClearExclusions">clear</span>`;
+    $('#headerClearExclusions').onclick = () => {
+      excludedArtists.clear();
+      saveExcludedArtists();
+      renderExcludedList();
+      updateExclusionUI();
+      render();
+    };
+  } else {
+    indicator.innerHTML = '';
+  }
+}
+
+// Initialize exclusion UI on load
+updateExclusionUI();
+
 function resizeAll() {
   Object.values(charts).forEach(c => c && c.resize());
 }
@@ -408,6 +711,9 @@ window.addEventListener('resize', resizeAll);
 
 // ===== RENDER =====
 function render() {
+  // Update header meta (reflects exclusions)
+  updateHeaderMeta();
+
   // Update tab active state
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === state.tab));
 
@@ -432,18 +738,20 @@ function render() {
 // ===== OVERVIEW =====
 function renderOverview(el) {
   const m = S.meta;
+  const fs = getFilteredStats();
   const years = m.years;
   const daysActive = Math.ceil((m.last_scrobble - m.first_scrobble) / 86400);
-  const avgPerDay = (m.total_scrobbles / daysActive).toFixed(1);
+  const avgPerDay = (fs.total_scrobbles / daysActive).toFixed(1);
+  const fl = fs.filtered ? '<div class="filtered-label">(filtered)</div>' : '';
 
   el.innerHTML = `
     <div class="cards">
-      <div class="card"><div class="label">Total Scrobbles</div><div class="value accent">${fmt(m.total_scrobbles)}</div></div>
-      <div class="card"><div class="label">Unique Artists</div><div class="value">${fmt(m.unique_artists)}</div></div>
-      <div class="card"><div class="label">Unique Tracks</div><div class="value">${fmt(m.unique_tracks)}</div></div>
-      <div class="card"><div class="label">Unique Albums</div><div class="value">${fmt(m.unique_albums)}</div></div>
-      <div class="card"><div class="label">Loved Tracks</div><div class="value">${fmt(m.loved_count)}</div></div>
-      <div class="card"><div class="label">Avg / Day</div><div class="value">${avgPerDay}</div></div>
+      <div class="card"><div class="label">Total Scrobbles</div><div class="value accent">${fmt(fs.total_scrobbles)}</div>${fl}</div>
+      <div class="card"><div class="label">Unique Artists</div><div class="value">${fmt(fs.unique_artists)}</div>${fl}</div>
+      <div class="card"><div class="label">Unique Tracks</div><div class="value">${fmt(fs.unique_tracks)}</div>${fl}</div>
+      <div class="card"><div class="label">Unique Albums</div><div class="value">${fmt(fs.unique_albums)}</div>${fl}</div>
+      <div class="card"><div class="label">Loved Tracks</div><div class="value">${fmt(fs.loved_count)}</div>${fl}</div>
+      <div class="card"><div class="label">Avg / Day</div><div class="value">${avgPerDay}</div>${fl}</div>
     </div>
     <div class="chart-box">
       <h3 id="drillTitle">Scrobbles per Year</h3>
@@ -621,7 +929,8 @@ function renderArtists(el) {
   `;
 
   function update(year) {
-    const items = year === 'all' ? S.top_artists.overall : (S.top_artists.by_year[year] || []);
+    const rawItems = year === 'all' ? S.top_artists.overall : (S.top_artists.by_year[year] || []);
+    const items = filterTopArtists(rawItems);
     const top = items.slice(0, 50).reverse();
     const c = makeChart('artistsBarChart', {
       tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
@@ -694,7 +1003,8 @@ function renderTracks(el) {
   `;
 
   function update(year) {
-    const items = year === 'all' ? S.top_tracks.overall : (S.top_tracks.by_year[year] || []);
+    const rawItems = year === 'all' ? S.top_tracks.overall : (S.top_tracks.by_year[year] || []);
+    const items = filterTopItems(rawItems);
     const table = $('#tracksTable');
     table.innerHTML = `<thead><tr><th class="rank">#</th><th>Track</th><th class="count">Plays</th></tr></thead>` +
       '<tbody>' + items.slice(0, 50).map((t, i) => {
@@ -720,7 +1030,8 @@ function renderAlbums(el) {
   `;
 
   function update(year) {
-    const items = year === 'all' ? S.top_albums.overall : (S.top_albums.by_year[year] || []);
+    const rawItems = year === 'all' ? S.top_albums.overall : (S.top_albums.by_year[year] || []);
+    const items = filterTopItems(rawItems);
     const table = $('#albumsTable');
     table.innerHTML = `<thead><tr><th class="rank">#</th><th>Album</th><th class="count">Plays</th></tr></thead>` +
       '<tbody>' + items.slice(0, 50).map((a, i) => {
@@ -737,17 +1048,18 @@ function renderAlbums(el) {
 
 // ===== LOVED =====
 function renderLoved(el) {
+  const lovedItems = hasExclusions() ? S.loved.filter(t => !excludedArtists.has(t.artist)) : S.loved;
   el.innerHTML = `
     <input class="search-input" id="lovedSearch" placeholder="Search loved tracks...">
     <div class="chart-box">
-      <h3>Loved Tracks (${fmt(S.loved.length)})</h3>
+      <h3>Loved Tracks (${fmt(lovedItems.length)})${hasExclusions() ? ' <small style="color:var(--text-dim);font-weight:normal">(filtered)</small>' : ''}</h3>
       <div id="lovedList"></div>
     </div>
   `;
 
   function update(query) {
     const q = query.toLowerCase();
-    const filtered = q ? S.loved.filter(t => `${t.artist} ${t.track} ${t.album}`.toLowerCase().includes(q)) : S.loved;
+    const filtered = q ? lovedItems.filter(t => `${t.artist} ${t.track} ${t.album}`.toLowerCase().includes(q)) : lovedItems;
     const list = $('#lovedList');
     list.innerHTML = filtered.slice(0, 200).map(t =>
       `<div class="loved-item"><span class="date">${fmtDate(t.timestamp)}</span><strong>${escHtml(t.track)}</strong> <span class="artist">by ${escHtml(t.artist)}</span></div>`
@@ -806,7 +1118,7 @@ function renderTrends(el) {
   });
 
   // Top 5 artists stacked area
-  const topArtistNames = S.top_artists.overall.slice(0, 5).map(a => a.name);
+  const topArtistNames = filterTopArtists(S.top_artists.overall).slice(0, 5).map(a => a.name);
   const colors = ['#d51007', '#ff6b35', '#f7c948', '#47b881', '#5c7cfa'];
   const stackSeries = topArtistNames.map((name, i) => {
     const trend = S.artist_trends[name] || {};
