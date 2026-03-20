@@ -258,8 +258,8 @@ def main() -> None:
     stats = generate(scrobbles)
 
     output = DATA_DIR / "stats.js"
-    js = "window.LASTFM_STATS = " + json.dumps(stats, separators=(",", ":")) + ";\n"
-    output.write_text(js)
+    js = "window.LASTFM_STATS = " + json.dumps(stats, separators=(",", ":"), ensure_ascii=False) + ";\n"
+    output.write_text(js, encoding="utf-8")
 
     size_kb = output.stat().st_size / 1024
     console.print(
