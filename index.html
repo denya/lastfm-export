@@ -954,25 +954,18 @@ function showArtistTrend(artist) {
   box.style.display = 'block';
   $('#artistTrendTitle').textContent = `${artist} — Yearly Trend`;
   const trend = S.artist_trends[artist];
-  if (!trend) {
-    // Build from by_year data
-    const years = S.meta.years;
-    const data = years.map(y => {
+  let years, data;
+  if (trend) {
+    years = Object.keys(trend).sort();
+    data = years.map(y => trend[y]);
+  } else {
+    years = S.meta.years;
+    data = years.map(y => {
       const items = S.top_artists.by_year[y] || [];
       const found = items.find(a => a.name === artist);
       return found ? found.count : 0;
     });
-    makeChart('artistTrendChart', {
-      tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
-      xAxis: { type: 'category', data: years, axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
-      yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
-      series: [{ type: 'line', data, smooth: true, lineStyle: { color: themeColor('--accent') }, itemStyle: { color: themeColor('--accent') }, areaStyle: { color: 'rgba(213,16,7,0.15)' } }],
-      grid: { left: 60, right: 20, bottom: 40, top: 20 },
-    });
-    return;
   }
-  const years = Object.keys(trend).sort();
-  const data = years.map(y => trend[y]);
   makeChart('artistTrendChart', {
     tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
     xAxis: { type: 'category', data: years, axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
