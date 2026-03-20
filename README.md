@@ -30,13 +30,13 @@ open index.html              # View interactive report
 ## Screenshots
 
 ### Year overview (2014)
-![2014 stats overview](screenshots/2014-overview.jpg)
+![2014 stats overview](screenshots/2014-overview.png)
 
 ### Top artists & tracks (2014)
-![2014 top artists and tracks](screenshots/2014-top-artists-tracks.jpg)
+![2014 top artists and tracks](screenshots/2014-top-artists-tracks.png)
 
 ### Listening patterns (2014)
-![2014 listening patterns](screenshots/2014-listening-patterns.jpg)
+![2014 listening patterns](screenshots/2014-listening-patterns.png)
 
 ## License
 
