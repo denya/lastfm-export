@@ -402,6 +402,36 @@ function filterByEntityState(items) {
   });
 }
 
+// Compute top-N tracks/albums from raw scrobbles when entity filters are active
+function computeTopFromRaw(type, n = 50) {
+  const counts = {};
+  for (const s of SC.s) {
+    if (isExcluded(s[0])) continue;
+    if (state.artist && SC.a[s[0]] !== state.artist) continue;
+    if (state.album && SC.l[s[2]] !== state.album) continue;
+    const key = type === 'tracks'
+      ? `${SC.a[s[0]]} \u2014 ${SC.t[s[1]]}`
+      : `${SC.a[s[0]]} \u2014 ${SC.l[s[2]]}`;
+    counts[key] = (counts[key] || 0) + 1;
+  }
+  return Object.entries(counts)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, n)
+    .map(([name, count]) => ({ name, count }));
+}
+
+// Get top items: use pre-aggregated when no entity filter, raw computation otherwise
+function getTopItems(type, year) {
+  const hasEntityFilter = state.artist || state.album;
+  if (!hasEntityFilter) {
+    const source = type === 'tracks' ? S.top_tracks : S.top_albums;
+    const rawItems = year === 'all' ? source.overall : (source.by_year[year] || []);
+    return filterTopItems(rawItems);
+  }
+  // Compute from raw scrobbles
+  return computeTopFromRaw(type);
+}
+
 // Cached filtered time-series + stats, recomputed from SC.s
 const _ftsCache = new Map();
 function invalidateFilteredCache() { _ftsCache.clear(); }
@@ -1002,7 +1032,7 @@ function renderDrill(level, year) {
   if (level === 'yearly') {
     title.textContent = 'Scrobbles per Year';
     bc.innerHTML = '';
-    const data = getFilteredTimeSeries().yearly.map(y => ({ name: y.year, value: y.scrobbles }));
+    const data = getFilteredTimeSeries(getStateFilterParams()).yearly.map(y => ({ name: y.year, value: y.scrobbles }));
     const c = makeChart('drillChart', {
       tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
       xAxis: { type: 'category', data: data.map(d => d.name), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
@@ -1019,7 +1049,7 @@ function renderDrill(level, year) {
   } else if (level === 'monthly') {
     title.textContent = `Scrobbles in ${year}`;
     bc.innerHTML = `<span onclick="renderDrill('yearly')">All Years</span><span class="sep">›</span><span class="current">${year}</span>`;
-    const months = getFilteredTimeSeries().monthly.filter(m => m.month.startsWith(year));
+    const months = getFilteredTimeSeries(getStateFilterParams()).monthly.filter(m => m.month.startsWith(year));
     const c = makeChart('drillChart', {
       tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
       xAxis: { type: 'category', data: months.map(m => MONTH_NAMES[parseInt(m.month.split('-')[1]) - 1]), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
@@ -1129,13 +1159,25 @@ function renderHeatmapRange() {
     ? ['#ebedf0', '#fdd0cc', '#f4837d', '#d51007', '#a00d06']
     : ['#161b22', '#3d0c02', '#7a1a0a', '#d51007', '#ff6b35'];
 
-  // Compute max across all selected years
+  // Compute max across all selected years; fill all days to avoid blank cells
   let globalMax = 1;
   const allData = {};
+  const emptyColor = heatmapColors[0];
   years.forEach(y => {
-    const days = fts.daily_counts.filter(d => d.date.startsWith(y));
-    allData[y] = days.map(d => [d.date, d.count]);
-    days.forEach(d => { if (d.count > globalMax) globalMax = d.count; });
+    const dayMap = {};
+    fts.daily_counts.filter(d => d.date.startsWith(y)).forEach(d => {
+      dayMap[d.date] = d.count;
+      if (d.count > globalMax) globalMax = d.count;
+    });
+    // Fill every day in the year with 0 if not present
+    const data = [];
+    const start = new Date(Date.UTC(parseInt(y), 0, 1));
+    const end = new Date(Date.UTC(parseInt(y), 11, 31));
+    for (let d = new Date(start); d <= end; d.setUTCDate(d.getUTCDate() + 1)) {
+      const key = d.toISOString().slice(0, 10);
+      data.push([key, dayMap[key] || 0]);
+    }
+    allData[y] = data;
   });
 
   // Dynamic height: each year ~170px (7 rows * 16px + labels + gap)
@@ -1148,7 +1190,7 @@ function renderHeatmapRange() {
     range: y,
     cellSize: [16, 16],
     top: 40 + i * yearHeight, left: 80, right: 40,
-    itemStyle: { borderColor: themeColor('--bg'), borderWidth: 2 },
+    itemStyle: { color: emptyColor, borderColor: themeColor('--bg'), borderWidth: 2 },
     yearLabel: { show: years.length > 1, position: 'left', color: themeColor('--text-dim'), fontSize: 12, margin: 8 },
     monthLabel: { color: themeColor('--text-dim'), fontSize: 11 },
     dayLabel: { color: themeColor('--text-dim'), firstDay: 1, show: i === 0 },
@@ -1289,8 +1331,7 @@ function renderTracks(el) {
   `;
 
   function update(year) {
-    const rawItems = year === 'all' ? S.top_tracks.overall : (S.top_tracks.by_year[year] || []);
-    const items = filterByEntityState(filterTopItems(rawItems));
+    const items = getTopItems('tracks', year);
     const table = $('#tracksTable');
     table.innerHTML = `<thead><tr><th class="rank">#</th><th>Track</th><th class="count">Plays</th></tr></thead>` +
       '<tbody>' + items.slice(0, 50).map((t, i) => {
@@ -1317,8 +1358,7 @@ function renderAlbums(el) {
   `;
 
   function update(year) {
-    const rawItems = year === 'all' ? S.top_albums.overall : (S.top_albums.by_year[year] || []);
-    const items = filterByEntityState(filterTopItems(rawItems));
+    const items = getTopItems('albums', year);
     const table = $('#albumsTable');
     table.innerHTML = `<thead><tr><th class="rank">#</th><th>Album</th><th class="count">Plays</th></tr></thead>` +
       '<tbody>' + items.slice(0, 50).map((a, i) => {
