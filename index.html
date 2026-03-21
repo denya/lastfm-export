@@ -287,6 +287,25 @@ a:hover { text-decoration: underline; }
   font-size: 10px; color: var(--accent-light); margin-top: 2px;
 }
 
+/* Entity links in scrobble table */
+.entity-link { color: inherit; text-decoration: none; cursor: pointer; }
+.entity-link:hover { color: var(--accent-light); text-decoration: underline; }
+
+/* Filter chips bar */
+.filter-chips {
+  display: flex; gap: 8px; padding: 8px 24px; flex-wrap: wrap;
+  background: var(--surface); border-bottom: 1px solid var(--border);
+}
+.filter-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 16px; padding: 4px 12px; font-size: 12px; color: var(--text);
+}
+.filter-chip .chip-remove {
+  cursor: pointer; color: var(--text-dim); font-size: 14px; line-height: 1;
+}
+.filter-chip .chip-remove:hover { color: var(--accent-light); }
+
 @media (max-width: 500px) {
   .filter-panel { width: 100vw; }
 }
@@ -322,6 +341,7 @@ a:hover { text-decoration: underline; }
 </div>
 
 <div class="tabs" id="tabsBar"></div>
+<div class="filter-chips" id="filterChips" style="display:none"></div>
 
 <div class="content" id="content"></div>
 
@@ -334,6 +354,7 @@ const $$ = (sel, ctx = document) => [...ctx.querySelectorAll(sel)];
 const fmt = n => n.toLocaleString();
 const fmtDate = ts => new Date(ts * 1000).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 const fmtMonth = m => { const [y, mo] = m.split('-'); return new Date(y, mo - 1).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }); };
+const MONTH_NAMES = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 // Scrobble data decoder
 const SC = window.LASTFM_SCROBBLES;
@@ -371,15 +392,31 @@ function filterTopArtists(items) {
   return items.filter(item => !excludedArtists.has(item.name));
 }
 
-// Cached filtered time-series + stats, recomputed from SC.s when exclusions active
-let _filteredCache = null;
-function invalidateFilteredCache() { _filteredCache = null; }
+// Filter items by entity state (artist/track/album from state)
+function filterByEntityState(items) {
+  if (!state.artist && !state.album) return items;
+  return items.filter(item => {
+    const artist = item.name.split(' \u2014 ')[0];
+    if (state.artist && artist !== state.artist) return false;
+    return true;
+  });
+}
 
-function getFilteredTimeSeries() {
-  if (_filteredCache) return _filteredCache;
+// Cached filtered time-series + stats, recomputed from SC.s
+const _ftsCache = new Map();
+function invalidateFilteredCache() { _ftsCache.clear(); }
 
-  if (!hasExclusions()) {
-    _filteredCache = {
+function getFilteredTimeSeries(params = {}) {
+  const { startTs, endTs, artistIdx, trackIdx, albumIdx } = params;
+  const hasParams = startTs || endTs || artistIdx !== undefined || trackIdx !== undefined || albumIdx !== undefined;
+
+  // Cache key
+  const cacheKey = `${startTs||''}|${endTs||''}|${artistIdx ?? ''}|${trackIdx ?? ''}|${albumIdx ?? ''}|${excludedArtists.size}`;
+  if (_ftsCache.has(cacheKey)) return _ftsCache.get(cacheKey);
+
+  // Fast path: no exclusions AND no params → return pre-aggregated data
+  if (!hasExclusions() && !hasParams) {
+    const result = {
       yearly: S.yearly, monthly: S.monthly, hourly: S.hourly,
       dow: S.dow, daily_counts: S.daily_counts,
       artist_yearly: S.artist_trends, years: S.meta.years,
@@ -390,7 +427,8 @@ function getFilteredTimeSeries() {
       loved_count: S.meta.loved_count,
       filtered: false,
     };
-    return _filteredCache;
+    _ftsCache.set(cacheKey, result);
+    return result;
   }
 
   // Single pass over all scrobbles to compute everything
@@ -408,6 +446,11 @@ function getFilteredTimeSeries() {
 
   for (const s of SC.s) {
     if (isExcluded(s[0])) continue;
+    if (startTs && s[3] < startTs) continue;
+    if (endTs && s[3] > endTs) continue;
+    if (artistIdx !== undefined && s[0] !== artistIdx) continue;
+    if (trackIdx !== undefined && s[1] !== trackIdx) continue;
+    if (albumIdx !== undefined && s[2] !== albumIdx) continue;
     total++;
     uniqueArtists.add(s[0]);
     uniqueTracks.add(s[1]);
@@ -441,7 +484,7 @@ function getFilteredTimeSeries() {
   const hourly = hourlyArr;
   const dow = dowArr.map((count, i) => ({ day: dowNames[i], count }));
 
-  _filteredCache = {
+  const result = {
     yearly, monthly, hourly, dow, daily_counts: daily,
     artist_yearly: artistYearly, years: yearsSorted,
     total_scrobbles: total,
@@ -451,7 +494,10 @@ function getFilteredTimeSeries() {
     loved_count: loved,
     filtered: true,
   };
-  return _filteredCache;
+  // LRU: keep max 8 cache entries
+  if (_ftsCache.size > 8) { const first = _ftsCache.keys().next().value; _ftsCache.delete(first); }
+  _ftsCache.set(cacheKey, result);
+  return result;
 }
 
 function getScrobblesInRange(startTs, endTs) {
@@ -468,49 +514,80 @@ function getScrobblesByArtist(artistName) {
 }
 const fmtDateTime = ts => new Date(ts * 1000).toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
-function renderScrobbleTable(scrobbles, containerId, pageSize = 200) {
-  const total = scrobbles.length;
-  const totalPages = Math.ceil(total / pageSize);
-  const st = { page: 0, scrobbles, pageSize, totalPages, containerId };
-
-  st.renderPage = function() {
-    const start = st.page * pageSize;
-    const slice = scrobbles.slice(start, start + pageSize);
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    container.innerHTML = `
-      <div class="drill-table-wrap">
-        <table class="scrobble-table">
-          <thead><tr><th>Date</th><th>Track</th><th>Artist</th><th>Album</th><th></th></tr></thead>
-          <tbody>${slice.map(s => `<tr>
-            <td class="dim">${fmtDateTime(s.timestamp)}</td>
-            <td>${escHtml(s.track)}</td>
-            <td class="dim">${escHtml(s.artist)}</td>
-            <td class="dim">${escHtml(s.album)}</td>
-            <td>${s.loved ? '<span class="loved-icon">\u2665</span>' : ''}</td>
-          </tr>`).join('')}</tbody>
-        </table>
-      </div>
-      ${totalPages > 1 ? `<div class="pagination">
-        <button onclick="scrobbleTableNav('${containerId}',-1)" ${st.page === 0 ? 'disabled' : ''}>Prev</button>
-        <span>Page ${st.page + 1} of ${totalPages} (${total.toLocaleString()} scrobbles)</span>
-        <button onclick="scrobbleTableNav('${containerId}',1)" ${st.page >= totalPages - 1 ? 'disabled' : ''}>Next</button>
-      </div>` : `<div class="pagination"><span>${total.toLocaleString()} scrobbles</span></div>`}
-    `;
-  };
-
-  window._scrobbleTableState = window._scrobbleTableState || {};
-  window._scrobbleTableState[containerId] = st;
-  st.renderPage();
+function escAttr(s) {
+  return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
 }
-window.scrobbleTableNav = function(id, dir) {
-  const st = window._scrobbleTableState[id];
-  st.page = Math.max(0, Math.min(st.totalPages - 1, st.page + dir));
-  st.renderPage();
-};
+
+function scrobbleRowHtml(s) {
+  return `<tr>
+    <td class="dim">${fmtDateTime(s.timestamp)}</td>
+    <td><a class="entity-link" data-type="track" data-value="${escAttr(s.track)}">${escHtml(s.track)}</a></td>
+    <td class="dim"><a class="entity-link" data-type="artist" data-value="${escAttr(s.artist)}">${escHtml(s.artist)}</a></td>
+    <td class="dim"><a class="entity-link" data-type="album" data-value="${escAttr(s.album)}">${escHtml(s.album)}</a></td>
+    <td>${s.loved ? '<span class="loved-icon">\u2665</span>' : ''}</td>
+  </tr>`;
+}
+
+let _activeObserver = null;
+function renderScrobbleTable(scrobbles, containerId, batchSize = 100) {
+  const total = scrobbles.length;
+  let rendered = 0;
+
+  // Clean up previous observer
+  if (_activeObserver) { _activeObserver.disconnect(); _activeObserver = null; }
+
+  const container = document.getElementById(containerId);
+  if (!container) return;
+  const wrapId = containerId + '_wrap';
+  const bodyId = containerId + '_body';
+  const sentinelId = containerId + '_sentinel';
+
+  container.innerHTML = `
+    <div class="drill-table-wrap" id="${wrapId}">
+      <table class="scrobble-table">
+        <thead><tr><th>Date</th><th>Track</th><th>Artist</th><th>Album</th><th></th></tr></thead>
+        <tbody id="${bodyId}"></tbody>
+      </table>
+      <div id="${sentinelId}" style="height:1px"></div>
+    </div>
+    <div class="pagination"><span>${total.toLocaleString()} scrobbles</span></div>
+  `;
+
+  function appendBatch() {
+    const tbody = document.getElementById(bodyId);
+    if (!tbody) return;
+    const end = Math.min(rendered + batchSize, total);
+    let html = '';
+    for (let i = rendered; i < end; i++) html += scrobbleRowHtml(scrobbles[i]);
+    tbody.insertAdjacentHTML('beforeend', html);
+    rendered = end;
+    if (rendered >= total && _activeObserver) { _activeObserver.disconnect(); _activeObserver = null; }
+  }
+
+  appendBatch(); // initial batch
+
+  const wrap = document.getElementById(wrapId);
+  const sentinel = document.getElementById(sentinelId);
+  if (wrap && sentinel && rendered < total) {
+    _activeObserver = new IntersectionObserver(entries => {
+      if (entries[0].isIntersecting) appendBatch();
+    }, { root: wrap, rootMargin: '200px' });
+    _activeObserver.observe(sentinel);
+  }
+
+  // Event delegation for entity links
+  container.addEventListener('click', e => {
+    const link = e.target.closest('.entity-link');
+    if (!link) return;
+    e.preventDefault();
+    const type = link.dataset.type;
+    const value = link.dataset.value;
+    navigate({ [type]: value });
+  });
+}
 
 // State
-let state = { tab: 'overview', year: 'all' };
+let state = { tab: 'overview', year: null, month: null, artist: null, track: null, album: null };
 const charts = {};
 
 // Tabs definition
@@ -523,9 +600,57 @@ const TABS = [
   { id: 'trends', label: 'Trends' },
 ];
 
+// Helper: compute UTC timestamp range from year/month
+function getTimeRange(year, month) {
+  if (!year) return {};
+  const y = parseInt(year);
+  const startTs = Math.floor(Date.UTC(y, month ? parseInt(month) - 1 : 0, 1) / 1000);
+  const endTs = month
+    ? Math.floor(Date.UTC(y, parseInt(month), 0, 23, 59, 59) / 1000)
+    : Math.floor(Date.UTC(y + 1, 0, 0, 23, 59, 59) / 1000);
+  return { startTs, endTs };
+}
+
+// Build filter params from current state for getFilteredTimeSeries
+function getStateFilterParams() {
+  const params = getTimeRange(state.year, state.month);
+  if (state.artist) params.artistIdx = artistIdxMap.get(state.artist);
+  if (state.track) params.trackIdx = trackIdxMap.get(state.track);
+  if (state.album) params.albumIdx = albumIdxMap.get(state.album);
+  return params;
+}
+
+// Build index maps for tracks and albums
+const trackIdxMap = new Map();
+SC.t.forEach((name, i) => trackIdxMap.set(name, i));
+const albumIdxMap = new Map();
+SC.l.forEach((name, i) => albumIdxMap.set(name, i));
+
+// Filter chips rendering
+function renderFilterChips() {
+  const bar = $('#filterChips');
+  const chips = [];
+  if (state.year) chips.push({ label: state.month ? `${MONTH_NAMES[parseInt(state.month)-1]} ${state.year}` : state.year, key: 'year' });
+  if (state.artist) chips.push({ label: `Artist: ${state.artist}`, key: 'artist' });
+  if (state.track) chips.push({ label: `Track: ${state.track}`, key: 'track' });
+  if (state.album) chips.push({ label: `Album: ${state.album}`, key: 'album' });
+  if (chips.length === 0) { bar.style.display = 'none'; return; }
+  bar.style.display = 'flex';
+  bar.innerHTML = chips.map(c =>
+    `<span class="filter-chip">${escHtml(c.label)} <span class="chip-remove" data-key="${c.key}">&times;</span></span>`
+  ).join('');
+  bar.querySelectorAll('.chip-remove').forEach(el => {
+    el.onclick = () => {
+      const key = el.dataset.key;
+      if (key === 'year') navigate({ year: null, month: null });
+      else navigate({ [key]: null });
+    };
+  });
+}
+
 // Header meta
 function updateHeaderMeta() {
-  const fts = getFilteredTimeSeries();
+  const fts = getFilteredTimeSeries(getStateFilterParams());
   $('#headerMeta').textContent = `${fmt(fts.total_scrobbles)} scrobbles · ${fmtDate(S.meta.first_scrobble)} – ${fmtDate(S.meta.last_scrobble)}`;
 }
 updateHeaderMeta();
@@ -552,12 +677,18 @@ function parseHash() {
 function setHash(s) {
   const parts = [];
   if (s.tab) parts.push(`tab=${s.tab}`);
-  if (s.year && s.year !== 'all') parts.push(`year=${s.year}`);
+  ['year','month','artist','track','album'].forEach(k => {
+    if (s[k]) parts.push(`${k}=${encodeURIComponent(s[k])}`);
+  });
   location.hash = parts.join('&');
 }
 
 function navigate(partial) {
   Object.assign(state, partial);
+  // Consistency: clearing year clears month
+  if (partial.year === null) state.month = null;
+  // Clearing artist clears track
+  if (partial.artist === null) state.track = null;
   setHash(state);
   render();
 }
@@ -565,7 +696,11 @@ function navigate(partial) {
 window.addEventListener('hashchange', () => {
   const h = parseHash();
   state.tab = h.tab || 'overview';
-  state.year = h.year || 'all';
+  state.year = h.year || null;
+  state.month = h.month || null;
+  state.artist = h.artist || null;
+  state.track = h.track || null;
+  state.album = h.album || null;
   render();
 });
 
@@ -768,6 +903,7 @@ window.addEventListener('resize', resizeAll);
 function render() {
   // Update header meta (reflects exclusions)
   updateHeaderMeta();
+  renderFilterChips();
 
   // Update tab active state
   $$('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === state.tab));
@@ -793,7 +929,8 @@ function render() {
 // ===== OVERVIEW =====
 function renderOverview(el) {
   const m = S.meta;
-  const fts = getFilteredTimeSeries();
+  const fp = getStateFilterParams();
+  const fts = getFilteredTimeSeries(fp);
   const years = m.years;
   const daysActive = Math.ceil((m.last_scrobble - m.first_scrobble) / 86400);
   const avgPerDay = (fts.total_scrobbles / daysActive).toFixed(1);
@@ -815,18 +952,23 @@ function renderOverview(el) {
     </div>
     <div class="row">
       <div class="chart-box">
-        <h3>Listening Hours</h3>
+        <h3 id="hourlyTitle">Listening Hours</h3>
         <div class="chart short" id="hourlyChart"></div>
       </div>
       <div class="chart-box">
-        <h3>Day of Week</h3>
+        <h3 id="dowTitle">Day of Week</h3>
         <div class="chart short" id="dowChart"></div>
       </div>
     </div>
     <div class="chart-box">
       <h3>Daily Activity Heatmap</h3>
-      ${yearSelectHTML('heatmapYear', false)}
-      <div class="chart tall" id="heatmapChart"></div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:16px">
+        <label style="font-size:13px;color:var(--text-dim)">From</label>
+        ${yearSelectHTML('heatmapFrom', false)}
+        <label style="font-size:13px;color:var(--text-dim)">To</label>
+        ${yearSelectHTML('heatmapTo', false)}
+      </div>
+      <div id="heatmapChart"></div>
     </div>
   `;
 
@@ -834,10 +976,12 @@ function renderOverview(el) {
   renderHourly();
   renderDow();
 
-  const defaultHeatYear = S.meta.years[S.meta.years.length - 1];
-  renderHeatmap(defaultHeatYear);
-  $('#heatmapYear').value = defaultHeatYear;
-  $('#heatmapYear').onchange = e => renderHeatmap(e.target.value);
+  const latestYear = S.meta.years[S.meta.years.length - 1];
+  $('#heatmapFrom').value = latestYear;
+  $('#heatmapTo').value = latestYear;
+  renderHeatmapRange();
+  $('#heatmapFrom').onchange = renderHeatmapRange;
+  $('#heatmapTo').onchange = renderHeatmapRange;
 }
 
 let drillLevel = 'yearly';
@@ -868,6 +1012,9 @@ function renderDrill(level, year) {
     });
     c.off('click');
     c.on('click', params => renderDrill('monthly', params.name));
+    // Update sub-charts for all-time (with entity filters from state)
+    renderHourly(getStateFilterParams());
+    renderDow(getStateFilterParams());
 
   } else if (level === 'monthly') {
     title.textContent = `Scrobbles in ${year}`;
@@ -875,16 +1022,22 @@ function renderDrill(level, year) {
     const months = getFilteredTimeSeries().monthly.filter(m => m.month.startsWith(year));
     const c = makeChart('drillChart', {
       tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
-      xAxis: { type: 'category', data: months.map(m => m.month.split('-')[1]), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+      xAxis: { type: 'category', data: months.map(m => MONTH_NAMES[parseInt(m.month.split('-')[1]) - 1]), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
       yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
       series: [{ type: 'bar', data: months.map(m => m.count), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#ff6b35' }, { offset: 1, color: '#d51007' }]), borderRadius: [3, 3, 0, 0] }, emphasis: { itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#ff9f1c' }, { offset: 1, color: '#ff3b30' }]) } } }],
       grid: { left: 60, right: 20, bottom: 40, top: 20 },
     });
     c.off('click');
     c.on('click', params => {
-      const monthNum = params.name;
+      const monthIdx = MONTH_NAMES.indexOf(params.name) + 1;
+      const monthNum = String(monthIdx).padStart(2, '0');
       renderDrill('scrobbles', `${year}-${monthNum}`);
     });
+    // Update sub-charts for this year (with entity filters from state)
+    const yearRange = getTimeRange(year);
+    const yearFp = { ...getStateFilterParams(), ...yearRange };
+    renderHourly(yearFp);
+    renderDow(yearFp);
 
   } else if (level === 'scrobbles') {
     // year is actually YYYY-MM here
@@ -911,13 +1064,27 @@ function renderDrill(level, year) {
       chartEl.parentNode.insertBefore(tableContainer, chartEl.nextSibling);
     }
     renderScrobbleTable(scrobbles, 'drillScrobbleTable');
+    // Update sub-charts for this month
+    const monthFp = { ...getStateFilterParams(), startTs, endTs };
+    renderHourly(monthFp);
+    renderDow(monthFp);
   }
 }
 // Make global for breadcrumb onclick
 window.renderDrill = renderDrill;
 
-function renderHourly() {
-  const hours = getFilteredTimeSeries().hourly;
+function renderHourly(filterParams) {
+  const fp = filterParams || getStateFilterParams();
+  const hours = getFilteredTimeSeries(fp).hourly;
+  // Update title with context
+  const titleEl = document.getElementById('hourlyTitle');
+  if (titleEl) {
+    let suffix = '';
+    if (state.month && state.year) suffix = ` (${MONTH_NAMES[parseInt(state.month)-1]} ${state.year})`;
+    else if (state.year) suffix = ` (${state.year})`;
+    if (state.artist) suffix += ` — ${state.artist}`;
+    titleEl.textContent = 'Listening Hours' + suffix;
+  }
   const labels = Array.from({ length: 24 }, (_, i) => `${i}:00`);
   const indicator = hours.map((v, i) => ({ name: labels[i], max: Math.max(...hours) }));
   makeChart('hourlyChart', {
@@ -927,42 +1094,87 @@ function renderHourly() {
   });
 }
 
-function renderDow() {
+function renderDow(filterParams) {
+  const fp = filterParams || getStateFilterParams();
+  const dowData = getFilteredTimeSeries(fp).dow;
+  // Update title with context
+  const titleEl = document.getElementById('dowTitle');
+  if (titleEl) {
+    let suffix = '';
+    if (state.month && state.year) suffix = ` (${MONTH_NAMES[parseInt(state.month)-1]} ${state.year})`;
+    else if (state.year) suffix = ` (${state.year})`;
+    if (state.artist) suffix += ` — ${state.artist}`;
+    titleEl.textContent = 'Day of Week' + suffix;
+  }
   makeChart('dowChart', {
     tooltip: { trigger: 'axis', backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') } },
-    xAxis: { type: 'category', data: getFilteredTimeSeries().dow.map(d => d.day), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
+    xAxis: { type: 'category', data: dowData.map(d => d.day), axisLabel: { color: themeColor('--text-dim') }, axisLine: { lineStyle: { color: themeColor('--border') } } },
     yAxis: { type: 'value', axisLabel: { color: themeColor('--text-dim') }, splitLine: { lineStyle: { color: themeColor('--surface2') } } },
-    series: [{ type: 'bar', data: getFilteredTimeSeries().dow.map(d => d.count), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#ff6b35' }, { offset: 1, color: '#d51007' }]), borderRadius: [3, 3, 0, 0] } }],
+    series: [{ type: 'bar', data: dowData.map(d => d.count), itemStyle: { color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [{ offset: 0, color: '#ff6b35' }, { offset: 1, color: '#d51007' }]), borderRadius: [3, 3, 0, 0] } }],
     grid: { left: 60, right: 20, bottom: 40, top: 20 },
   });
 }
 
-function renderHeatmap(year) {
-  const days = getFilteredTimeSeries().daily_counts.filter(d => d.date.startsWith(year));
-  const data = days.map(d => [d.date, d.count]);
-  const max = Math.max(...days.map(d => d.count), 1);
+function renderHeatmapRange() {
+  const fromYear = parseInt($('#heatmapFrom').value);
+  const toYear = parseInt($('#heatmapTo').value);
+  const startY = Math.min(fromYear, toYear);
+  const endY = Math.max(fromYear, toYear);
+  const years = [];
+  for (let y = startY; y <= endY; y++) years.push(String(y));
+
+  const fts = getFilteredTimeSeries();
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  const heatmapColors = isLight
+    ? ['#ebedf0', '#fdd0cc', '#f4837d', '#d51007', '#a00d06']
+    : ['#161b22', '#3d0c02', '#7a1a0a', '#d51007', '#ff6b35'];
+
+  // Compute max across all selected years
+  let globalMax = 1;
+  const allData = {};
+  years.forEach(y => {
+    const days = fts.daily_counts.filter(d => d.date.startsWith(y));
+    allData[y] = days.map(d => [d.date, d.count]);
+    days.forEach(d => { if (d.count > globalMax) globalMax = d.count; });
+  });
+
+  // Dynamic height: each year ~170px (7 rows * 16px + labels + gap)
+  const yearHeight = 170;
+  const totalHeight = years.length * yearHeight + 60;
+  const heatmapEl = document.getElementById('heatmapChart');
+  heatmapEl.style.height = totalHeight + 'px';
+
+  const calendarConfigs = years.map((y, i) => ({
+    range: y,
+    cellSize: [16, 16],
+    top: 40 + i * yearHeight, left: 80, right: 40,
+    itemStyle: { borderColor: themeColor('--bg'), borderWidth: 2 },
+    yearLabel: { show: years.length > 1, position: 'left', color: themeColor('--text-dim'), fontSize: 12, margin: 8 },
+    monthLabel: { color: themeColor('--text-dim'), fontSize: 11 },
+    dayLabel: { color: themeColor('--text-dim'), firstDay: 1, show: i === 0 },
+    splitLine: { lineStyle: { color: themeColor('--border') } },
+  }));
+
+  const seriesConfigs = years.map((y, i) => ({
+    type: 'heatmap',
+    coordinateSystem: 'calendar',
+    calendarIndex: i,
+    data: allData[y],
+  }));
+
   makeChart('heatmapChart', {
     tooltip: {
       formatter: p => `${p.value[0]}: ${p.value[1]} scrobbles`,
       backgroundColor: themeColor('--surface2'), borderColor: themeColor('--border'), textStyle: { color: themeColor('--text') },
     },
     visualMap: {
-      min: 0, max, show: true,
+      min: 0, max: globalMax, show: true,
       orient: 'horizontal', left: 'center', bottom: 10,
-      inRange: { color: [themeColor('--surface'), '#5a0904', themeColor('--accent'), themeColor('--accent-light')] },
+      inRange: { color: heatmapColors },
       textStyle: { color: themeColor('--text-dim') },
     },
-    calendar: {
-      range: year,
-      cellSize: [16, 16],
-      top: 40, left: 60, right: 40,
-      itemStyle: { borderColor: themeColor('--bg'), borderWidth: 2 },
-      yearLabel: { show: false },
-      monthLabel: { color: themeColor('--text-dim') },
-      dayLabel: { color: themeColor('--text-dim'), firstDay: 1 },
-      splitLine: { lineStyle: { color: themeColor('--border') } },
-    },
-    series: [{ type: 'heatmap', coordinateSystem: 'calendar', data }],
+    calendar: calendarConfigs,
+    series: seriesConfigs,
   });
 }
 
@@ -1067,17 +1279,18 @@ function showArtistTrend(artist) {
 
 // ===== TRACKS =====
 function renderTracks(el) {
+  const entityLabel = state.artist ? ` — ${escHtml(state.artist)}` : '';
   el.innerHTML = `
     ${yearSelectHTML('trackYear')}
     <div class="chart-box">
-      <h3>Top Tracks</h3>
+      <h3>Top Tracks${entityLabel}</h3>
       <table class="stats-table" id="tracksTable"></table>
     </div>
   `;
 
   function update(year) {
     const rawItems = year === 'all' ? S.top_tracks.overall : (S.top_tracks.by_year[year] || []);
-    const items = filterTopItems(rawItems);
+    const items = filterByEntityState(filterTopItems(rawItems));
     const table = $('#tracksTable');
     table.innerHTML = `<thead><tr><th class="rank">#</th><th>Track</th><th class="count">Plays</th></tr></thead>` +
       '<tbody>' + items.slice(0, 50).map((t, i) => {
@@ -1094,17 +1307,18 @@ function renderTracks(el) {
 
 // ===== ALBUMS =====
 function renderAlbums(el) {
+  const entityLabel = state.artist ? ` — ${escHtml(state.artist)}` : '';
   el.innerHTML = `
     ${yearSelectHTML('albumYear')}
     <div class="chart-box">
-      <h3>Top Albums</h3>
+      <h3>Top Albums${entityLabel}</h3>
       <table class="stats-table" id="albumsTable"></table>
     </div>
   `;
 
   function update(year) {
     const rawItems = year === 'all' ? S.top_albums.overall : (S.top_albums.by_year[year] || []);
-    const items = filterTopItems(rawItems);
+    const items = filterByEntityState(filterTopItems(rawItems));
     const table = $('#albumsTable');
     table.innerHTML = `<thead><tr><th class="rank">#</th><th>Album</th><th class="count">Plays</th></tr></thead>` +
       '<tbody>' + items.slice(0, 50).map((a, i) => {
@@ -1121,7 +1335,10 @@ function renderAlbums(el) {
 
 // ===== LOVED =====
 function renderLoved(el) {
-  const lovedItems = hasExclusions() ? S.loved.filter(t => !excludedArtists.has(t.artist)) : S.loved;
+  let lovedItems = hasExclusions() ? S.loved.filter(t => !excludedArtists.has(t.artist)) : S.loved;
+  if (state.artist) lovedItems = lovedItems.filter(t => t.artist === state.artist);
+  if (state.track) lovedItems = lovedItems.filter(t => t.track === state.track);
+  if (state.album) lovedItems = lovedItems.filter(t => t.album === state.album);
   el.innerHTML = `
     <input class="search-input" id="lovedSearch" placeholder="Search loved tracks...">
     <div class="chart-box">
@@ -1227,7 +1444,11 @@ function escHtml(s) {
 // Init
 const initHash = parseHash();
 state.tab = initHash.tab || 'overview';
-state.year = initHash.year || 'all';
+state.year = initHash.year || null;
+state.month = initHash.month || null;
+state.artist = initHash.artist || null;
+state.track = initHash.track || null;
+state.album = initHash.album || null;
 render();
 </script>
 </body>
