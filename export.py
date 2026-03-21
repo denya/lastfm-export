@@ -148,14 +148,15 @@ def main() -> None:
             f"[cyan]{total_pages:,}[/cyan] pages[/bold]"
         )
 
+        # Always process page 1 (on resume, new scrobbles may have shifted pages;
+        # deduplication at the end handles any duplicates)
+        for track in first["recenttracks"]["track"]:
+            s = parse_scrobble(track)
+            if s:
+                scrobbles.append(s)
         if start_page == 0:
-            # Process page 1
-            for track in first["recenttracks"]["track"]:
-                s = parse_scrobble(track)
-                if s:
-                    scrobbles.append(s)
             start_page = 1
-            save_state(scrobbles, 1)
+        save_state(scrobbles, start_page)
 
         with Progress(
             SpinnerColumn(),
