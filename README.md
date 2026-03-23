@@ -21,10 +21,16 @@ Or manually: `cp .env.example .env` and fill in your values.
 ## Usage
 
 ```bash
+uv run run.py                # Does everything: setup → export/update → stats
+open index.html              # View interactive report
+```
+
+Or run steps individually:
+
+```bash
 uv run export.py             # Full export (first time)
 uv run export.py --update    # Incremental update (only new scrobbles)
 uv run generate_stats.py     # Generate stats from exported data
-open index.html              # View interactive report
 ```
 
 ## Screenshots
